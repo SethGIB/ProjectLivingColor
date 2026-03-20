@@ -10,7 +10,7 @@ Standalone GLSL shader tests for the plasma efffects. These effects drive the LE
 
 ## Dependencies
 
-The projects are presented as  `.sprj` files, which require [ShaderED](https://www.shadered.org), but the GLSL code (`.vert` and `.frag` files) can be used in any environment that loads GLSL. Note that you'll probably have to change some of the uniform names to match the names used in your specific environment.
+The projects are presented as  `.sprj` files, which require [SHADERed](https://www.shadered.org), but the GLSL code (`.vert` and `.frag` files) can be used in any environment that loads GLSL. Note that you'll probably have to change some of the uniform names to match the names used in your specific environment.
 
 ***
 
