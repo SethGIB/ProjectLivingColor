@@ -26,7 +26,7 @@ float LivingColorFXSenderApp::sFPS = 30.0f;
 void LivingColorFXSenderApp::setup()
 {
 	mUseNetwork = true;
-	mUseCamera = true;
+	mUseCamera = false;
 
 	mImgHeight = 640;
 	mImgWidth = 360;
@@ -53,8 +53,13 @@ void LivingColorFXSenderApp::setup()
 		setupImages();
 	}
 
-	if (mUseNetwork)
-		mFxSender.init(mIpAddr, mPortNum);
+	if (mUseNetwork) {
+		// Attempt discovery, and if it fails or isn't found within 2 seconds, print an error
+		if (!mFxSender.autoInit(mPortNum)) {
+			// Optional: Fallback to static IP or retry. We will just report error here.
+			ci::app::console() << "Could not auto-discover plasma server on the network." << std::endl;
+		}
+	}
 
 	setupLeds();
 	setupPlasma();
@@ -64,6 +69,7 @@ void LivingColorFXSenderApp::setup()
 
 	mPlasmaTime = Timer(true);
 	mDemoTimer = Timer(true);
+	mReconnectTimer = Timer(true);
 }
 
 void LivingColorFXSenderApp::keyDown(KeyEvent event)
@@ -106,6 +112,23 @@ void LivingColorFXSenderApp::keyDown(KeyEvent event)
 
 void LivingColorFXSenderApp::update()
 {
+	if (mUseNetwork) {
+		if (!mFxSender.isPortOpen()) {
+			if (mReconnectTimer.getSeconds() > 5.0) {
+				ci::app::console() << "Attempting to reconnect..." << std::endl;
+				mFxSender.autoInit(mPortNum);
+				mReconnectTimer.start(); // restart the timer
+			}
+		} else {
+			// If we think we are connected, verify periodically (e.g. every 10 seconds)
+			// This catches scenarios where the server rebooted under a new IP address
+			if (mReconnectTimer.getSeconds() > 10.0) {
+				mFxSender.checkConnection();
+				mReconnectTimer.start();
+			}
+		}
+	}
+
 	if (mUseCamera)
 	{
 		updateFrames();

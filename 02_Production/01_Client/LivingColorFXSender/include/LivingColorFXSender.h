@@ -69,14 +69,57 @@ public:
 			asio::ip::udp::resolver resolver(mIoContext);
 			mEndpoint = *resolver.resolve(asio::ip::udp::v4(), ip, std::to_string(port)).begin();
 
-			// Open the socket
-			mSocket.open(asio::ip::udp::v4());
+			// Only open if not already open
+			if (!mSocket.is_open()) {
+				mSocket.open(asio::ip::udp::v4());
+			}
 			mFxBuffer.resize(mFrameSize);
 			mPortIsOpen = true;
 		}
 		catch (const std::exception& e) {
 			ci::app::console() << "Network Init Error: " << e.what() << std::endl;
 			mPortIsOpen = false;
+		}
+	}
+
+	bool autoInit(const int& targetPort, const int& discoveryPort = 50050) {
+		try {
+			asio::ip::udp::socket sock(mIoContext, asio::ip::udp::endpoint(asio::ip::udp::v4(), 0));
+			sock.set_option(asio::socket_base::broadcast(true));
+
+			asio::ip::udp::endpoint broadcastEndpoint(asio::ip::address_v4::broadcast(), discoveryPort);
+			std::string msg = "DISCOVER";
+			sock.send_to(asio::buffer(msg), broadcastEndpoint);
+
+			char reply[128];
+			asio::ip::udp::endpoint senderEndpoint;
+			
+			bool received = false;
+			sock.async_receive_from(asio::buffer(reply), senderEndpoint,
+				[&received](const asio::error_code& error, std::size_t bytes_recvd) {
+					if (!error && bytes_recvd > 0) {
+						received = true;
+					}
+				});
+
+			mIoContext.restart();
+			mIoContext.run_for(std::chrono::milliseconds(2000));
+
+			if (received) {
+				std::string replyStr(reply);
+				if (replyStr.find("PLASMA_SERVER") != std::string::npos) {
+					std::string ip = senderEndpoint.address().to_string();
+					ci::app::console() << "Discovered server at " << ip << std::endl;
+					init(ip, targetPort);
+					return true;
+				}
+			}
+			ci::app::console() << "Discovery timed out or failed." << std::endl;
+			return false;
+		}
+		catch (const std::exception& e) {
+			ci::app::console() << "Discovery error: " << e.what() << std::endl;
+			return false;
 		}
 	}
 
@@ -102,6 +145,7 @@ public:
 
 		if (err) {
 			ci::app::console() << "Send Error: " << err.message() << std::endl;
+			close();
 		}
 	}
 
@@ -117,6 +161,48 @@ public:
 	bool isPortOpen() const { return mPortIsOpen; }
 	int mNumLeds = 216;
 	int mFrameSize = mNumLeds * 3;
+
+	void checkConnection() {
+		// Use a separate io_context so we don't race with the main thread's mIoContext
+		std::thread([this]() {
+			try {
+				asio::io_context discoverContext;
+				asio::ip::udp::socket sock(discoverContext, asio::ip::udp::endpoint(asio::ip::udp::v4(), 0));
+				sock.set_option(asio::socket_base::broadcast(true));
+
+				asio::ip::udp::endpoint broadcastEndpoint(asio::ip::address_v4::broadcast(), 50050);
+				std::string msg = "DISCOVER";
+				sock.send_to(asio::buffer(msg), broadcastEndpoint);
+
+				char reply[128];
+				asio::ip::udp::endpoint senderEndpoint;
+
+				bool received = false;
+				sock.async_receive_from(asio::buffer(reply), senderEndpoint,
+					[&received](const asio::error_code& error, std::size_t bytes_recvd) {
+						if (!error && bytes_recvd > 0) {
+							received = true;
+						}
+					});
+
+				discoverContext.run_for(std::chrono::milliseconds(2000));
+
+				if (received) {
+					std::string replyStr(reply);
+					if (replyStr.find("PLASMA_SERVER") != std::string::npos) {
+						std::string ip = senderEndpoint.address().to_string();
+						// Only update the endpoint, don't re-open the socket
+						asio::ip::udp::resolver resolver(mIoContext);
+						mEndpoint = *resolver.resolve(asio::ip::udp::v4(), ip, std::to_string(50051)).begin();
+						ci::app::console() << "Verified server at " << ip << std::endl;
+					}
+				}
+			}
+			catch (const std::exception& e) {
+				ci::app::console() << "Check connection error: " << e.what() << std::endl;
+			}
+		}).detach();
+	}
 
 private:
 	// ASIO Networking components
@@ -192,6 +278,8 @@ private:
 
 	Timer mDemoTimer;
 	bool mDemoMode;
+	
+	Timer mReconnectTimer;
 
 	vector<FXLed> mLeds;
 	
